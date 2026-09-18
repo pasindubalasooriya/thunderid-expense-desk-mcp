@@ -1,0 +1,18 @@
+# Secrets and local configuration
+.env
+.claude/
+
+# Runtime state
+expenses.json
+audit.jsonl
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Not part of the published repo
+BLOG.md
+docs/
+lets-go-with1-wise-dream.md
+tools/capture.ps1

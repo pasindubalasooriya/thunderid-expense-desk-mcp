@@ -1,0 +1,153 @@
+# Expense Desk — the whole IAM setup as one declarative document.
+#
+# Apply with ThunderID's import API (needs an access token with the `system` scope):
+#
+#   curl -k -X POST https://localhost:8095/import \
+#     -H "Authorization: Bearer $SYSTEM_TOKEN" \
+#     -H "Content-Type: application/json" \
+#     --data @payload.json      # payload.json = {"content": <this file>, "dryRun": true}
+#
+# The blog walks through the console screens instead, because screenshots teach the
+# setup better. This file is the fast path for readers who just want it running.
+#
+# User passwords are import variables, not literals. Pass them in the `variables`
+# object of the import request so no credential is committed to this file:
+#
+#   {"content": "<this file>", "variables": {"ANDREA_PASSWORD": "...",
+#                                            "MIKE_PASSWORD": "..."}}
+#
+# STATUS: not yet validated against a live import. Validate with dryRun first.
+#
+# ---------------------------------------------------------------------------
+# 1. The resource server: our MCP server, as ThunderID sees it.
+#
+# `identifier` is what lands in the token's `aud` claim, and it must match
+# MCP_RESOURCE_ID in .env exactly.
+#
+# MCP resource servers use FLAT tool permissions. There is no resource/action
+# hierarchy here -- that is for API resource servers. Each action sits directly on
+# the resource server, and for a top-level action the handle IS the permission,
+# with no prefix and no delimiter applied:
+#
+#   backend/internal/resource/service.go:1524
+#   func derivePermission(rs, parent, handle) string {
+#       if parent != nil { return parent.Permission + rs.Delimiter + handle }
+#       return handle            // top-level: the handle is the permission
+#   }
+#
+# So the handles below ARE the scope strings, and they must match authz/scopes.py
+# character for character. A mismatch does not error -- the tool silently vanishes
+# from the client's tool list, which looks exactly like a tool that never existed.
+#
+# The console derives the handle from the name by lowercasing and joining words
+# with a hyphen, so "Expenses Read" gives `expenses-read`. Handles are immutable
+# after creation.
+# ---------------------------------------------------------------------------
+resource_type: resource_server
+id: expense-desk-rs
+name: Expense Desk MCP
+description: Expense approval tools exposed over MCP.
+type: MCP
+ouHandle: default
+identifier: http://localhost:8000/mcp
+delimiter: ":"
+# NOTE: the four tool permissions are NOT declared here, because the declarative
+# importer cannot express them. It only builds actions nested under a resource,
+# and always applies the delimiter when deriving their permission:
+#
+#   backend/internal/resource/declarative_resource.go:380
+#   actionPermission := permission + delimiter + res.Actions[i].Handle
+#
+# That yields hierarchical strings like `expenses:read`. MCP tool permissions are
+# FLAT -- the handle is the permission, with no prefix -- so they have to be added
+# through the console's "Add tool permission" panel, or posted directly:
+#
+#   for h in expenses-read expenses-submit expenses-approve expenses-refund; do
+#     curl -k -X POST "https://localhost:8095/resource-servers/$RS_ID/actions" #       -H "Authorization: Bearer $SYSTEM_TOKEN" #       -H "Content-Type: application/json" #       -d "{\"name\": \"$h\", \"handle\": \"$h\", \"kind\": \"tool\"}"
+#   done
+#
+# The roles below reference those four permissions by string, so create the
+# permissions first, then import this file.
+
+---
+# ---------------------------------------------------------------------------
+# 2. Roles. Each role is a bundle of permissions on the resource server above.
+#
+# What a role grants is what ends up in the token's `scope` claim. andrea has no
+# `approve` permission, so no token she holds can carry `expenses-approve`, so
+# approve_expense never appears in her tool list.
+# ---------------------------------------------------------------------------
+resource_type: role
+id: expense-employee
+name: Expense Employee
+description: Can see expenses and file their own.
+ouHandle: default
+permissions:
+  - resourceServerId: expense-desk-rs
+    permissions:
+      - expenses-read
+      - expenses-submit
+
+---
+resource_type: role
+id: expense-approver
+name: Expense Approver
+description: Everything an employee can do, plus approving pending claims.
+ouHandle: default
+permissions:
+  - resourceServerId: expense-desk-rs
+    permissions:
+      - expenses-read
+      - expenses-submit
+      - expenses-approve
+
+---
+resource_type: role
+id: expense-triage
+name: Expense Triage Agent
+description: Read-only. Enough to summarise a queue, not to act on it.
+ouHandle: default
+permissions:
+  - resourceServerId: expense-desk-rs
+    permissions:
+      - expenses-read
+
+---
+# ---------------------------------------------------------------------------
+# 3. The cast. Passwords are demo values; this is a local sample, not a system
+# anyone should point at real money.
+# ---------------------------------------------------------------------------
+resource_type: user
+id: andrea
+type: person
+ouHandle: default
+attributes:
+  username: andrea
+  givenName: Andrea
+  familyName: Perez
+  email: andrea@test.com
+credentials:
+  password: "{{.ANDREA_PASSWORD}}"
+
+---
+resource_type: user
+id: mike
+type: person
+ouHandle: default
+attributes:
+  username: mike
+  givenName: Mike
+  familyName: Oduya
+  email: mike@test.com
+credentials:
+  password: "{{.MIKE_PASSWORD}}"
+
+---
+resource_type: agent
+id: expense-triage-bot
+name: Expense Triage Bot
+description: Summarises the pending queue each morning. Reads only.
+type: agent
+ouHandle: default
+attributes:
+  email: expense-triage-bot@test.com
