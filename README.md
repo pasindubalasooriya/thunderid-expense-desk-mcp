@@ -1,6 +1,6 @@
 # Expense Desk MCP
 
-An expense-approval MCP server secured with [ThunderID](https://github.com/asgardeo/thunder).
+An expense-approval MCP server secured with [ThunderID](github.com/thunder-id/thunderid).
 
 Most MCP authorization writing stops at "check the scope". This repo goes further,
 because its tools have real consequences — one of them moves money — and that forces
